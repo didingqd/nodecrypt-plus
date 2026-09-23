@@ -18,7 +18,7 @@
 
 首次部署成功后，还需要各做一次：
 
-1. **建 R2 桶**：Cloudflare 面板 → Storage & Databases → R2 → Create bucket，名字填 `nodecrypt-history-blobs`。R2 不会被自动创建（配置里已给出桶名，wrangler 视作资源已指定），桶名不需要任何 id。
+1. **建 R2 桶**：Cloudflare 面板 → Storage & Databases → R2 → Create bucket，名字填 `nodecrypt-history-blobs`。R2 不会被自动创建（自动供给只覆盖 D1），而 wrangler 在部署时就会校验桶是否存在，缺失会以 `code 10085` 让部署直接失败——**必须先建桶，否则部署不通过**。桶名不需要任何 id。
 2. **建表**：面板 → Storage & Databases → D1 → `nodecrypt-history` → Console，把 `worker/migrations/0001_history.sql` 的内容粘进去执行。beta 阶段 wrangler 不会把自动生成的库 ID 回写到 `.toml`，所以 `wrangler d1 migrations apply` 在 CI 里用不了，只能这样建表；文件里的语句均为 `IF NOT EXISTS`，重复执行无害。
 
 > 若你在面板上手动建了 D1 库，也可以把它的 UUID 填回 `wrangler.toml` 的 `database_id`，两种方式等效。

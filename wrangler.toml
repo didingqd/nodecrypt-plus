@@ -30,8 +30,10 @@ new_sqlite_classes = ["ChatRoom"]
 # 「自动资源供给」(automatic resource provisioning)：
 #   - 需要 wrangler >= 4.45.0（package.json 已从 ^4.16.1 升到 ^4.136.3，
 #     原版本太旧，不认识这个特性，只会硬报 10021 错误）
-#   - 部署时若账号下还没有同名资源，wrangler 会自己调 Cloudflare API
-#     创建 D1 库 / R2 桶并绑定到 Worker，之后持续保持绑定
+#   - 部署时若账号下还没有同名的 D1 库，wrangler 会自己调 Cloudflare API
+#     创建并绑定到 Worker，之后持续保持绑定
+#   - 该特性只覆盖 D1。R2 桶不会被自动创建，必须先手动建好，
+#     否则部署会以 code 10085「R2 bucket ... not found」直接失败（见下面 r2_buckets 的注释）
 #   - 该功能目前是 open beta，默认开启，可用 --no-x-provision 关闭
 # 这样就不必在本地跑 `wrangler d1 create`，也不会再因占位符 id 导致部署失败。
 #
@@ -53,8 +55,10 @@ migrations_dir = "worker/migrations"
 
 [[r2_buckets]]
 binding = "HISTORY_BLOB"
-# [修改] 桶若不存在，原则上也由自动供给创建；万一没有，在面板 R2 里
-# 手动建一个同名桶即可（R2 绑定只需要桶名，不需要任何 id）
+# [修改] R2 不参与自动供给，这个桶必须先在面板手动建好（Storage & Databases →
+# R2 → Create bucket），名字与下面一致，否则 wrangler 部署时会直接失败：
+#   R2 bucket 'nodecrypt-history-blobs' not found ... [code: 10085]
+# R2 绑定只需要桶名，不需要任何 id。
 bucket_name = "nodecrypt-history-blobs"
 
 # [新增-消息留存] 每分钟清理一次过期历史（留存分辨率要求 1 分钟）

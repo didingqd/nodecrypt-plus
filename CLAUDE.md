@@ -164,7 +164,7 @@ npx wrangler r2 bucket create nodecrypt-history-blobs
 
 首次部署成功后还有两件事，各做一次：
 
-1. **建 R2 桶**：面板 → Storage & Databases → R2 → Create bucket，名字 `nodecrypt-history-blobs`。R2 **不会**被自动供给创建——配置里给了 `bucket_name`，wrangler 视作「资源已指定」，既不创建也不校验存在性，桶缺失只在运行时访问大记录时才报错。想让它也自动创建，就把 `bucket_name` 那行删掉（桶名会由 wrangler 生成）。
+1. **建 R2 桶**：面板 → Storage & Databases → R2 → Create bucket，名字 `nodecrypt-history-blobs`。R2 **不参与自动供给**（自动供给只覆盖 D1），而 wrangler 在**部署时**就会校验桶是否存在，缺失会以 `R2 bucket '...' not found [code: 10085]` 让部署直接失败——**必须先建桶，否则部署不通过**。桶名不需要任何 id。
 2. **建表**：面板 → Storage & Databases → D1 → `nodecrypt-history` → Console，粘贴 `worker/migrations/0001_history.sql` 执行（语句均为 `IF NOT EXISTS`，可重复执行）。beta 阶段 wrangler 只把自动生成的库 ID 回写到 JSON 配置，`.toml` 的回写被静默忽略（workers-sdk#13632），因此 `wrangler d1 migrations apply` 在 CI 里用不了。
 
 若改为在面板手动建 D1 库，就把它的 UUID 填回 `wrangler.toml` 的 `database_id`，`wrangler d1 migrations apply <name> --remote` 随之恢复可用。
