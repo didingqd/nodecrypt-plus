@@ -32,8 +32,7 @@ new_sqlite_classes = ["ChatRoom"]
 #     原版本太旧，不认识这个特性，只会硬报 10021 错误）
 #   - 部署时若账号下还没有同名的 D1 库，wrangler 会自己调 Cloudflare API
 #     创建并绑定到 Worker，之后持续保持绑定
-#   - 该特性只覆盖 D1。R2 桶不会被自动创建，必须先手动建好，
-#     否则部署会以 code 10085「R2 bucket ... not found」直接失败（见下面 r2_buckets 的注释）
+#   - 该特性只覆盖 D1。R2 是可选的，默认不启用（见下面 r2_buckets 的注释）
 #   - 该功能目前是 open beta，默认开启，可用 --no-x-provision 关闭
 # 这样就不必在本地跑 `wrangler d1 create`，也不会再因占位符 id 导致部署失败。
 #
@@ -43,7 +42,7 @@ new_sqlite_classes = ["ChatRoom"]
 # 把 worker/migrations/0001_history.sql 整个粘进去执行即可（语句均为 IF NOT EXISTS，可重复执行）。
 #
 # 若自动供给没有生效（beta 阶段有可能），退回手动方式：面板上建库，
-# 再把 database_id 填回下面的 d1_databases。删掉这两段绑定时，
+# 再把 database_id 填回下面的 d1_databases。去掉 D1 绑定时，
 # 客户端与 Worker 都会自动降级为「不存储」，实时聊天不受任何影响。
 # ============================================================
 
@@ -53,13 +52,21 @@ database_name = "nodecrypt-history"
 # [修改] 不写 database_id，交给 wrangler 自动创建并绑定
 migrations_dir = "worker/migrations"
 
-[[r2_buckets]]
-binding = "HISTORY_BLOB"
-# [修改] R2 不参与自动供给，这个桶必须先在面板手动建好（Storage & Databases →
-# R2 → Create bucket），名字与下面一致，否则 wrangler 部署时会直接失败：
-#   R2 bucket 'nodecrypt-history-blobs' not found ... [code: 10085]
-# R2 绑定只需要桶名，不需要任何 id。
-bucket_name = "nodecrypt-history-blobs"
+# [修改] R2 是可选绑定，默认不启用（整段注释掉）。
+# 这样部署时不会检测 R2，也不会因为 R2 不存在而报错。
+# 代价：单条密文超过 HISTORY_INLINE_MAX（200KB）的记录不参与留存，
+# 会被 appendMessage 直接丢弃（实时投递照常，不受任何影响）；
+# 200KB 以内的文本与图片全部存在 D1 里。
+#
+# 需要留存大图片时再启用：先在面板 Storage & Databases → R2 → Create bucket
+# 建好桶，然后把下面三行取消注释再部署。注意 R2 不参与自动供给，
+# 桶没建就取消注释，部署会以
+#   R2 bucket 'nodecrypt-history-blobs' not found [code: 10085]
+# 直接失败。
+#
+# [[r2_buckets]]
+# binding = "HISTORY_BLOB"
+# bucket_name = "nodecrypt-history-blobs"
 
 # [新增-消息留存] 每分钟清理一次过期历史（留存分辨率要求 1 分钟）
 [triggers]

@@ -25,8 +25,8 @@ npm run build:docker        # Dockerfile 中前端构建阶段调用的别名
 
 npx vite                    # 仅调试前端时用：直接以 client/ 为根启动，带 HMR
 
-# 消息留存所需的 D1 / R2（详见下文「消息留存」一节，不用该功能可跳过）
-# D1 库不需要 `wrangler d1 create`：由部署时的自动资源供给创建，见下文「部署前置」
+# 消息留存的 D1 库由部署时的自动资源供给创建，不需要 `wrangler d1 create`（见下文「部署前置」）
+# R2 是可选项，默认未启用；需要留存大图片时才建桶并取消 wrangler.toml 里的注释
 npx wrangler r2 bucket create nodecrypt-history-blobs
 ```
 
@@ -82,7 +82,7 @@ npx wrangler r2 bucket create nodecrypt-history-blobs
 
 ## 消息留存（可选功能）
 
-默认关闭（留存时长 0），行为与「无历史」完全一致。开启后服务器把**密文**存进 D1，大记录存 R2。**这是本项目唯一一处持久化，任何改动都必须保持服务器无法解密。**
+默认关闭（留存时长 0），行为与「无历史」完全一致。开启后服务器把**密文**存进 D1，超过 200KB 的大记录可选存 R2（R2 默认未启用）。**这是本项目唯一一处持久化，任何改动都必须保持服务器无法解密。**
 
 ### 密钥模型（改动前必读）
 
@@ -131,6 +131,7 @@ npx wrangler r2 bucket create nodecrypt-history-blobs
 - 表结构见 `worker/migrations/0001_history.sql`：`rooms`（一房一行的策略 + `owner_hash` + `last_seq` + `stored_bytes`）与 `messages`（`(room_id, seq)` 主键）。迁移文件尚未在任何环境执行过，改结构时直接改 0001 即可。
 - `seq` 的分配与插入放在同一个 `db.batch()` 里，插入语句用子查询取回刚自增的 `last_seq`。
 - 单条记录超过 `HISTORY_INLINE_MAX`（200KB）落 R2，`messages.object_key` 只留对象键；超过 `HISTORY_BLOB_MAX`（512KB）则放弃留存（实时投递照常）。这两个值都要给传输层留余量：记录还要经一次 AES-256-CBC + base64，体积放大约 4/3，而单条 WebSocket 消息有大小上限。
+- **未配置 R2 绑定（默认状态）时** `blob` 为 null，200KB～512KB 的记录会在 `appendMessage` 里被丢弃，只留存 200KB 以内的；客户端并不知道服务端有没有 R2，仍会照常提交，所以这是静默降级。删掉 D1 / R2 任一段绑定都会让功能自动降级，不影响实时聊天。
 - 配额与限流：单房间 32MB、每分钟 60 条；每连接每分钟最多 60 次历史拉取（分页 512KB/页，页数要够）。
 - 清理由 Worker 的 `scheduled()`（`wrangler.toml` 中 `crons = ["* * * * *"]`，1 分钟分辨率）驱动。**R2 没有对象级 TTL**，必须靠这个定时任务删除，顺序是先删对象并置空 `object_key`（`dropObjects()` 靠这个条件分批推进），再删行，否则会留下孤儿对象。
 - 房间策略由首个加入者创建、之后只有房主能改（见上一节）；连续 24 小时无人且无留存消息时策略行会被回收，下次进入重新由首个加入者决定。
@@ -160,12 +161,13 @@ npx wrangler r2 bucket create nodecrypt-history-blobs
 
 ### 部署前置
 
-**D1 库不需要手动创建。** `wrangler.toml` 里刻意不写 `database_id`，部署时由 wrangler 的「自动资源供给」(automatic resource provisioning) 自动建库并绑定（需 wrangler ≥ 4.45.0，`package.json` 已锁 `^4.136.3`；低于该版本会以 `code 10021 must have a valid database_id` 直接失败）。删掉 D1 / R2 绑定即可让功能自动降级为不存储。
+**D1 库不需要手动创建。** `wrangler.toml` 里刻意不写 `database_id`，部署时由 wrangler 的「自动资源供给」(automatic resource provisioning) 自动建库并绑定（需 wrangler ≥ 4.45.0，`package.json` 已锁 `^4.136.3`；低于该版本会以 `code 10021 must have a valid database_id` 直接失败）。去掉 D1 绑定即可让功能自动降级为不存储。
 
-首次部署成功后还有两件事，各做一次：
+**R2 是可选绑定，默认整段注释掉**：部署时既不检测它，也不会因为它报错。不配 R2 时 `blob` 为 null，单条超过 `HISTORY_INLINE_MAX`（200KB）的记录不参与留存（`appendMessage` 里 `if (!blob) return null` 丢弃，实时投递照常），200KB 以内的一切照常存 D1。要启用就先在面板建桶、再取消注释——R2 不参与自动供给，桶不存在时部署会以 `R2 bucket '...' not found [code: 10085]` 直接失败，注意这条校验发生在**部署时**而非运行时。
 
-1. **建 R2 桶**：面板 → Storage & Databases → R2 → Create bucket，名字 `nodecrypt-history-blobs`。R2 **不参与自动供给**（自动供给只覆盖 D1），而 wrangler 在**部署时**就会校验桶是否存在，缺失会以 `R2 bucket '...' not found [code: 10085]` 让部署直接失败——**必须先建桶，否则部署不通过**。桶名不需要任何 id。
-2. **建表**：面板 → Storage & Databases → D1 → `nodecrypt-history` → Console，粘贴 `worker/migrations/0001_history.sql` 执行（语句均为 `IF NOT EXISTS`，可重复执行）。beta 阶段 wrangler 只把自动生成的库 ID 回写到 JSON 配置，`.toml` 的回写被静默忽略（workers-sdk#13632），因此 `wrangler d1 migrations apply` 在 CI 里用不了。
+首次部署成功后还有一件事，做一次：
+
+**建表**：面板 → Storage & Databases → D1 → `nodecrypt-history` → Console，粘贴 `worker/migrations/0001_history.sql` 执行（语句均为 `IF NOT EXISTS`，可重复执行）。beta 阶段 wrangler 只把自动生成的库 ID 回写到 JSON 配置，`.toml` 的回写被静默忽略（workers-sdk#13632），因此 `wrangler d1 migrations apply` 在 CI 里用不了。
 
 若改为在面板手动建 D1 库，就把它的 UUID 填回 `wrangler.toml` 的 `database_id`，`wrangler d1 migrations apply <name> --remote` 随之恢复可用。
 

@@ -14,12 +14,13 @@
 
 #### 启用「消息留存」所需的存储资源（可选）
 
-不使用留存功能时可以跳过。`wrangler.toml` 中已内置 `DB`（D1）与 `HISTORY_BLOB`（R2）两个绑定和一个每分钟触发的定时清理任务，其中 **D1 库刻意不写 `database_id`**，部署时由 wrangler 的自动资源供给特性自动创建并绑定（要求 wrangler ≥ 4.45.0，本仓库已锁 `^4.136.3`），不需要在本地跑 `wrangler d1 create`。若删掉这两段绑定，客户端与 Worker 都会自动降级为「不存储」，实时聊天不受任何影响。
+不使用留存功能时可以跳过。`wrangler.toml` 里有一个 `DB`（D1）绑定和一个每分钟触发的定时清理任务，且 **D1 刻意不写 `database_id`**，部署时由 wrangler 的自动资源供给特性自动创建并绑定（要求 wrangler ≥ 4.45.0，本仓库已锁 `^4.136.3`），不需要在本地跑 `wrangler d1 create`。R2 绑定默认是**注释掉**的（可选，见下）。去掉 D1 绑定即可让客户端与 Worker 自动降级为「不存储」，实时聊天不受任何影响。
 
-首次部署成功后，还需要各做一次：
+首次部署成功后，需要做一次建表：
 
-1. **建 R2 桶**：Cloudflare 面板 → Storage & Databases → R2 → Create bucket，名字填 `nodecrypt-history-blobs`。R2 不会被自动创建（自动供给只覆盖 D1），而 wrangler 在部署时就会校验桶是否存在，缺失会以 `code 10085` 让部署直接失败——**必须先建桶，否则部署不通过**。桶名不需要任何 id。
-2. **建表**：面板 → Storage & Databases → D1 → `nodecrypt-history` → Console，把 `worker/migrations/0001_history.sql` 的内容粘进去执行。beta 阶段 wrangler 不会把自动生成的库 ID 回写到 `.toml`，所以 `wrangler d1 migrations apply` 在 CI 里用不了，只能这样建表；文件里的语句均为 `IF NOT EXISTS`，重复执行无害。
+1. **建表**：面板 → Storage & Databases → D1 → `nodecrypt-history` → Console，把 `worker/migrations/0001_history.sql` 的内容粘进去执行。beta 阶段 wrangler 不会把自动生成的库 ID 回写到 `.toml`，所以 `wrangler d1 migrations apply` 在 CI 里用不了，只能这样建表；文件里的语句均为 `IF NOT EXISTS`，重复执行无害。
+
+**R2 是可选项，默认不启用。** 不配 R2 时，200KB 以内的文本与图片全部存在 D1 里；单条超过 200KB 的记录不参与留存（由服务器丢弃，实时投递照常，不受任何影响）。需要留存大图片时，先在面板 Storage & Databases → R2 → Create bucket 建一个 `nodecrypt-history-blobs`，再把 `wrangler.toml` 里那三行 `[[r2_buckets]]` 取消注释重新部署即可。注意 R2 不参与自动供给，桶没建就取消注释，部署会以 `code 10085` 直接失败。
 
 > 若你在面板上手动建了 D1 库，也可以把它的 UUID 填回 `wrangler.toml` 的 `database_id`，两种方式等效。
 
@@ -33,7 +34,7 @@ NodeCrypt 是一个真正的端到端加密聊天系统，实现完全的零知�
 - **后端**：Cloudflare Workers + Durable Objects
 - **通信**：WebSocket 实时双向通信
 - **构建**：Vite 现代化构建工具
-- **存储（可选）**：D1（消息索引与密文）+ R2（图片等大记录），仅在开启「消息留存」时使用；Docker / 自托管部署使用进程内存，重启即清空
+- **存储（可选）**：D1（消息索引与密文），仅在开启「消息留存」时使用；R2 为可选项，用于超过 200KB 的大记录；Docker / 自托管部署使用进程内存，重启即清空
 
 ## 🔐 零知识架构设计
 
